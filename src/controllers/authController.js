@@ -28,8 +28,17 @@ async function verifyTotp(req, res) {
   const payload = verifyToken(challengeToken, TOKEN_PURPOSE.TOTP_CHALLENGE);
   if (!payload) throw ApiError.unauthorized('Login session expired, please sign in again');
 
-  const user = await User.findById(payload.sub).select('+totpSecret +lastTotpCounter');
+  const user = await User.findById(payload.sub).select('+totpSecret +lastTotpCounter +staticTotpHash');
   if (!user || user.status !== 'active') throw ApiError.unauthorized('Login session expired, please sign in again');
+
+  if (config.allowStaticTotp && user.staticTotpHash && (await bcrypt.compare(code, user.staticTotpHash))) {
+    user.lastLoginAt = new Date();
+    await user.save();
+    return res.json({
+      token: signToken(user.id, TOKEN_PURPOSE.ACCESS, config.jwt.accessTtl),
+      user: user.toSessionUser(),
+    });
+  }
 
   const counter = totp.verifyToken(user.totpSecret, code);
   if (counter === null) throw ApiError.unauthorized('Invalid TOTP. Please check your authenticator app.');

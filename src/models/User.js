@@ -36,6 +36,8 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     totpSecret: { type: String, required: true, select: false },
     lastTotpCounter: { type: Number, default: 0, select: false },
+    // Optional fixed code for QA/test accounts. Only accepted when ALLOW_STATIC_TOTP=true.
+    staticTotpHash: { type: String, select: false },
     lastLoginAt: Date,
 
     clientId: { type: String, required: true, unique: true },
@@ -112,6 +114,7 @@ const userSchema = new Schema(
         delete ret.passwordHash;
         delete ret.totpSecret;
         delete ret.lastTotpCounter;
+        delete ret.staticTotpHash;
         return ret;
       },
     },

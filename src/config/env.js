@@ -26,4 +26,5 @@ module.exports = {
     .filter(Boolean),
   totpIssuer: 'MachFinance',
   demoTotpSecret: process.env.DEMO_TOTP_SECRET || '',
+  allowStaticTotp: process.env.ALLOW_STATIC_TOTP === 'true',
 };
