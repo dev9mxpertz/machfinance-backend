@@ -9,6 +9,7 @@ const symbolParam = validate({ params: z.object({ symbol }) });
 const clockTime = z.string().regex(/^\d{1,2}:\d{2}$/, 'Use HH:mm').optional();
 
 router.get('/search', validate({ query: z.object({ q: z.string().max(40).optional() }) }), controller.search);
+router.get('/stream', controller.stream);
 router.get('/nifty50', controller.nifty50);
 router.get('/sectors', controller.sectors);
 router.get('/quote/:symbol', symbolParam, controller.quote);

@@ -5,13 +5,17 @@
  * A background poller keeps an in-memory cache so the rest of the market service
  * can stay synchronous:
  *   - quotes for NIFTY, BANKNIFTY, India VIX and the NIFTY 50 stocks
- *     (every 15s while NSE is open, every 5 min otherwise)
+ *     (every 5s while NSE is open, every 5 min otherwise)
+ *
+ * Each successful refresh emits a 'quotes' event, which the /market/stream
+ * endpoint pushes to connected browsers.
  *   - 5 years of daily candles per symbol (refreshed every 6 hours)
  *
  * Everything degrades gracefully: when a value is missing, callers fall back to
  * the simulated model, so the API keeps working if Yahoo is slow or blocks us.
  * Yahoo's data is unofficial and may be delayed; it is not a licensed exchange feed.
  */
+const { EventEmitter } = require('events');
 const clock = require('./marketClock');
 const { INDICES, NIFTY50 } = require('./instruments');
 
@@ -19,7 +23,7 @@ const BASE_URL = 'https://query1.finance.yahoo.com';
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 const BATCH_SIZE = 20;
 const REQUEST_TIMEOUT_MS = 10000;
-const OPEN_REFRESH_MS = 15 * 1000;
+const OPEN_REFRESH_MS = 5 * 1000;
 const CLOSED_REFRESH_MS = 5 * 60 * 1000;
 const BACKOFF_MS = 60 * 1000;
 const DAILY_REFRESH_MS = 6 * 60 * 60 * 1000;
@@ -27,6 +31,9 @@ const DAILY_STAGGER_MS = 400;
 
 const INDEX_SYMBOLS = { NIFTY: '^NSEI', BANKNIFTY: '^NSEBANK', INDIAVIX: '^INDIAVIX' };
 const ALL_SYMBOLS = [...Object.keys(INDICES), 'INDIAVIX', ...NIFTY50.map((stock) => stock.symbol)];
+
+const events = new EventEmitter();
+events.setMaxListeners(0); // one listener per connected browser
 
 const state = {
   quotes: new Map(),
@@ -131,6 +138,7 @@ async function refreshQuotes() {
   if (updated) {
     state.quotesUpdatedAt = Date.now();
     if (results.every((r) => r.status === 'fulfilled')) state.lastError = null;
+    events.emit('quotes');
   }
   const throttled = results.some((r) => r.status === 'rejected' && r.reason && r.reason.status === 429);
   return { updated, throttled };
@@ -243,4 +251,4 @@ function status() {
   };
 }
 
-module.exports = { start, refreshQuotes, getQuote, getDaily, priceAtMinute, status };
+module.exports = { events, start, refreshQuotes, getQuote, getDaily, priceAtMinute, status };

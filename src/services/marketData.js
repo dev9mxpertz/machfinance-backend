@@ -542,6 +542,20 @@ function getSectorBreakdown(now = new Date()) {
   });
 }
 
+/** Every quote the app shows, plus India VIX, for the live price stream. */
+function getSnapshot(now = new Date()) {
+  const quotes = {};
+  [...Object.keys(INDICES), ...NIFTY50.map((stock) => stock.symbol)].forEach((symbol) => {
+    quotes[symbol] = getQuote(symbol, now);
+  });
+  const vix = liveFeed.getQuote('INDIAVIX');
+  return {
+    quotes,
+    vix: vix ? { value: vix.ltp, change: round2(vix.ltp - vix.prevClose) } : null,
+    sentAt: now.toISOString(),
+  };
+}
+
 function searchSymbols(query = '') {
   const term = String(query).trim().toUpperCase();
   const all = [
@@ -567,6 +581,7 @@ module.exports = {
   getFundamentals,
   getNifty50,
   getSectorBreakdown,
+  getSnapshot,
   searchSymbols,
   requireIndex,
 };

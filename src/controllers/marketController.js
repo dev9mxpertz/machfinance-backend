@@ -1,4 +1,5 @@
 const market = require('../services/marketData');
+const liveFeed = require('../services/liveFeed');
 const { parseClock } = require('../services/marketClock');
 const ApiError = require('../utils/ApiError');
 
@@ -65,4 +66,49 @@ function search(req, res) {
   res.json({ items: market.searchSymbols(req.valid.query.q) });
 }
 
-module.exports = { quote, expiries, optionChain, oiChange, candles, depth, fundamentals, nifty50, sectors, search };
+const HEARTBEAT_MS = 25000;
+
+/**
+ * Server-Sent Events stream of all quotes. Sends a snapshot on connect and again
+ * after every live-feed refresh (~5s during market hours). A heartbeat comment
+ * keeps proxies such as Render's from closing an idle connection.
+ */
+function stream(req, res) {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+
+  const send = () => {
+    try {
+      res.write(`event: quotes\ndata: ${JSON.stringify(market.getSnapshot())}\n\n`);
+    } catch {
+      /* connection already closed */
+    }
+  };
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), HEARTBEAT_MS);
+
+  send();
+  liveFeed.events.on('quotes', send);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    liveFeed.events.off('quotes', send);
+  });
+}
+
+module.exports = {
+  quote,
+  expiries,
+  optionChain,
+  oiChange,
+  candles,
+  depth,
+  fundamentals,
+  nifty50,
+  sectors,
+  search,
+  stream,
+};
