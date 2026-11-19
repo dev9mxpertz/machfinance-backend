@@ -11,6 +11,7 @@ const { User, Strategy, Position, Trade, StrategyCode, CodeRun } = require('../m
 const totp = require('../utils/totp');
 const { createRng } = require('../utils/random');
 const market = require('../services/marketData');
+const liveFeed = require('../services/liveFeed');
 const tradingService = require('../services/tradingService');
 const { runSimulatedBacktest } = require('../services/backtestSimulator');
 const { tradingDaysUntil, getSession } = require('../services/marketClock');
@@ -108,6 +109,15 @@ function buildTrades(userId, rng) {
 
 async function seed() {
   await connectDatabase();
+  // Use real prices for positions and premiums when the live feed is enabled.
+  if (config.marketDataSource === 'yahoo') {
+    try {
+      const { updated } = await liveFeed.refreshQuotes();
+      console.log(`Live prices loaded for ${updated} symbols`);
+    } catch (error) {
+      console.warn(`Live prices unavailable (${error.message}); using simulated prices`);
+    }
+  }
   const rng = createRng(20260401);
 
   const existing = await User.findOne({ email: DEMO_EMAIL });

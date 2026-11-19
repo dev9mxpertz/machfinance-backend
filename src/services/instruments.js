@@ -61,7 +61,7 @@ const RAW_CONSTITUENTS = [
   ['HCLTECH', 'HCL Technologies', 'IT', 1610.9, 1.6],
   ['MARUTI', 'Maruti Suzuki', 'Automobile', 12400.0, 1.5],
   ['NTPC', 'NTPC', 'Power', 360.45, 1.5],
-  ['TATAMOTORS', 'Tata Motors', 'Automobile', 720.3, 1.4],
+  ['TMPV', 'Tata Motors Passenger Vehicles', 'Automobile', 252.5, 1.4],
   ['POWERGRID', 'Power Grid', 'Power', 305.2, 1.3],
   ['TITAN', 'Titan Company', 'Consumer Durables', 3320.55, 1.3],
   ['ULTRACEMCO', 'UltraTech Cement', 'Construction Materials', 11300.0, 1.2],

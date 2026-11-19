@@ -27,4 +27,6 @@ module.exports = {
   totpIssuer: 'MachFinance',
   demoTotpSecret: process.env.DEMO_TOTP_SECRET || '',
   allowStaticTotp: process.env.ALLOW_STATIC_TOTP === 'true',
+  // 'yahoo' (default): live NSE prices from Yahoo Finance; 'simulated': offline model only.
+  marketDataSource: (process.env.MARKET_DATA_SOURCE || 'yahoo').toLowerCase(),
 };

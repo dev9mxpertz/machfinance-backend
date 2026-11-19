@@ -1,12 +1,15 @@
 /**
- * Simulated market data provider.
+ * Market data provider.
  *
- * The project does not ship with a licensed exchange feed, so every number here
- * is generated deterministically from the symbol, date and time of day. The
- * public functions mirror what a broker/data-vendor adapter would expose, so a
- * real feed can replace this module without touching controllers.
+ * Spot prices, day ranges, intraday ticks, daily candles and India VIX come from
+ * the live feed (services/liveFeed.js, Yahoo Finance) when it has data. Anything
+ * the free feed cannot provide - option premiums, OI, market depth - is modelled
+ * from the live spot price (Black-Scholes with a VIX-driven volatility smile).
+ * If the live feed is unavailable every value falls back to a deterministic
+ * simulation, so the API never stops answering.
  */
 const { rngFor } = require('../utils/random');
+const liveFeed = require('./liveFeed');
 const blackScholes = require('../utils/blackScholes');
 const clock = require('./marketClock');
 const { INDICES, NIFTY50, SECTORS, getInstrument } = require('./instruments');
@@ -63,6 +66,28 @@ function requireInstrument(symbol) {
 function getQuote(symbol, now = new Date()) {
   const instrument = requireInstrument(symbol);
   const session = clock.getSession(now);
+
+  const live = liveFeed.getQuote(instrument.symbol);
+  if (live) {
+    const fresh = now.getTime() - live.asOf < 15 * 60 * 1000;
+    return {
+      symbol: instrument.symbol,
+      name: instrument.name,
+      ltp: live.ltp,
+      open: live.open,
+      high: live.high,
+      low: live.low,
+      prevClose: live.prevClose,
+      change: round2(live.ltp - live.prevClose),
+      changePct: round2(((live.ltp - live.prevClose) / live.prevClose) * 100),
+      sessionDate: live.dateKey,
+      sessionTime: clock.formatClock(Math.min(Math.max(live.minute, clock.SESSION_OPEN), clock.SESSION_CLOSE)),
+      isMarketOpen: session.isOpen && live.dateKey === session.dateKey && fresh,
+      source: 'live',
+      asOf: new Date(live.asOf).toISOString(),
+    };
+  }
+
   const prevClose = previousClose(instrument, session.dateKey);
   const ltp = priceAt(instrument, session.dateKey, session.minute);
 
@@ -87,6 +112,7 @@ function getQuote(symbol, now = new Date()) {
     sessionDate: session.dateKey,
     sessionTime: clock.formatClock(session.minute),
     isMarketOpen: session.isOpen,
+    source: 'simulated',
   };
 }
 
@@ -140,10 +166,25 @@ function assertExpiry(symbol, expiry, now) {
   }
 }
 
+/** India VIX from the live feed, or the static fallback for the index. */
+function vixFor(index) {
+  const live = liveFeed.getQuote('INDIAVIX');
+  if (!live) return { value: index.vix, change: 0.1, live: false };
+  return { value: live.ltp, change: round2(live.ltp - live.prevClose), live: true };
+}
+
+/** ATM volatility: India VIX when live (BANKNIFTY trades at a premium), else the static base. */
+function baseIvFor(index) {
+  const vix = vixFor(index);
+  if (!vix.live) return index.baseIv;
+  const premium = index.symbol === 'BANKNIFTY' ? 1.12 : 1;
+  return (vix.value / 100) * premium;
+}
+
 function impliedVol(index, spot, strike, years) {
   const moneyness = Math.log(strike / spot);
   const shortDatedPremium = 0.015 * Math.max(0, 1 - years * 24);
-  return Math.max(0.07, index.baseIv + shortDatedPremium - 0.22 * moneyness + 2.4 * moneyness ** 2);
+  return Math.max(0.07, baseIvFor(index) + shortDatedPremium - 0.22 * moneyness + 2.4 * moneyness ** 2);
 }
 
 function openInterestProfile(index, expiry, strike, type, spot, dateKey) {
@@ -209,7 +250,8 @@ function getOptionChain(symbol, expiry, { strikeCount = 10 } = {}, now = new Dat
     atmStrike: atm,
     lotSize: index.lotSize,
     strikeStep: index.strikeStep,
-    vix: { value: index.vix, change: 0.1 },
+    vix: (({ value, change }) => ({ value, change }))(vixFor(index)),
+    source: quote.source,
     ivPercentile: index.ivPercentile,
     pcr: round2(totals.putOi / totals.callOi),
     rows,
@@ -279,8 +321,8 @@ function getOiChange({ symbol, expiries, from, to, strikeMin, strikeMax }, now =
     to: clock.formatClock(toMinute),
     sessionCloses: clock.formatClock(clock.SESSION_CLOSE),
     spot: quote.ltp,
-    spotAtFrom: priceAt(index, session.dateKey, fromMinute),
-    spotAtTo: priceAt(index, session.dateKey, toMinute),
+    spotAtFrom: liveFeed.priceAtMinute(index.symbol, fromMinute) ?? priceAt(index, session.dateKey, fromMinute),
+    spotAtTo: liveFeed.priceAtMinute(index.symbol, toMinute) ?? priceAt(index, session.dateKey, toMinute),
     atmStrike: Math.round(quote.ltp / index.strikeStep) * index.strikeStep,
     totals,
     strikes,
@@ -289,7 +331,25 @@ function getOiChange({ symbol, expiries, from, to, strikeMin, strikeMax }, now =
 
 // --- Charts ----------------------------------------------------------------------
 
+/** Real daily candles with today's bar updated from the live quote. */
+function liveDailyCandles(instrument, count) {
+  const history = liveFeed.getDaily(instrument.symbol);
+  if (!history || !history.length) return null;
+  const candles = history.slice(-count);
+  const live = liveFeed.getQuote(instrument.symbol);
+  if (live) {
+    const last = candles[candles.length - 1];
+    const today = { time: live.dateKey, open: live.open, high: live.high, low: live.low, close: live.ltp };
+    if (last.time === live.dateKey) candles[candles.length - 1] = { ...last, ...today };
+    else if (last.time < live.dateKey) candles.push({ ...today, volume: 0 });
+  }
+  return candles.slice(-count);
+}
+
 function buildDailyCandles(instrument, now, count) {
+  const real = liveDailyCandles(instrument, count);
+  if (real) return real;
+
   const quote = getQuote(instrument.symbol, now);
   const days = clock.tradingDaysUntil(quote.sessionDate, count);
   const rng = rngFor('candles', instrument.symbol);
@@ -342,7 +402,8 @@ function getCandles(symbol, interval = '1D', now = new Date()) {
   const instrument = requireInstrument(symbol);
   const daily = buildDailyCandles(instrument, now, 1000);
   const candles = interval === '1W' ? aggregateWeekly(daily).slice(-180) : daily.slice(-320);
-  return { symbol: instrument.symbol, name: instrument.name, interval, candles };
+  const source = liveFeed.getDaily(instrument.symbol) ? 'live' : 'simulated';
+  return { symbol: instrument.symbol, name: instrument.name, interval, candles, source };
 }
 
 function getMarketDepth(symbol, now = new Date()) {
@@ -380,6 +441,34 @@ function getFundamentals(symbol, now = new Date()) {
   const high52 = Math.max(...yearCandles.map((c) => c.high));
   const low52 = Math.min(...yearCandles.map((c) => c.low));
   const rng = rngFor('fundamentals', instrument.symbol);
+
+  // With live data, report only real figures instead of modelled valuation ratios.
+  if (quote.source === 'live' && liveFeed.getDaily(instrument.symbol)) {
+    const recent = yearCandles.slice(-21, -1).filter((c) => c.volume > 0);
+    const avgVolume = recent.length ? recent.reduce((sum, c) => sum + c.volume, 0) / recent.length : 0;
+    const metrics = [
+      { label: 'Prev Close', value: quote.prevClose },
+      { label: 'Open', value: quote.open },
+      { label: 'Day High', value: quote.high },
+      { label: 'Day Low', value: quote.low },
+      { label: '52W High', value: round2(high52) },
+      { label: '52W Low', value: round2(low52) },
+    ];
+    if (instrument.kind === 'index') {
+      metrics.push({ label: 'Constituents', value: instrument.symbol === 'NIFTY' ? 50 : 12 });
+    } else {
+      if (avgVolume) metrics.push({ label: 'Avg Volume (20D)', value: Math.round(avgVolume).toLocaleString('en-IN') });
+      metrics.push({ label: 'Index Weight', value: `${round2(instrument.weight)}%` });
+    }
+    return {
+      symbol: instrument.symbol,
+      name: instrument.name,
+      kind: instrument.kind === 'index' ? 'index' : 'stock',
+      sector: instrument.sector,
+      source: 'live',
+      metrics,
+    };
+  }
 
   if (instrument.kind === 'index') {
     return {

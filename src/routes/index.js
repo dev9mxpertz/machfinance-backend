@@ -1,11 +1,16 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const liveFeed = require('../services/liveFeed');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
 router.get('/health', (_req, res) => {
-  res.json({ status: 'ok', db: mongoose.connection.readyState === 1 ? 'up' : 'down' });
+  res.json({
+    status: 'ok',
+    db: mongoose.connection.readyState === 1 ? 'up' : 'down',
+    marketData: liveFeed.status(),
+  });
 });
 
 router.use('/auth', require('./authRoutes'));

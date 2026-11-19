@@ -1,12 +1,18 @@
 const config = require('./config/env');
 const { connectDatabase, disconnectDatabase } = require('./config/db');
 const createApp = require('./app');
+const liveFeed = require('./services/liveFeed');
 
 async function start() {
   if (config.allowStaticTotp) {
     console.warn('[api] ALLOW_STATIC_TOTP is on: test accounts can log in with a fixed code. Keep it off in production.');
   }
   await connectDatabase();
+  if (config.marketDataSource === 'yahoo') {
+    liveFeed.start();
+  } else {
+    console.log('[market] using simulated market data (MARKET_DATA_SOURCE=simulated)');
+  }
   const app = createApp();
   const server = app.listen(config.port, () => {
     console.log(`[api] listening on http://localhost:${config.port} (${config.nodeEnv})`);
